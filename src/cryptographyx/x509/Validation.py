@@ -127,7 +127,7 @@ class CertificateChain( object ):
             else:
                 issuerCertificate = self._trustedLookup.findCertificateFor( certificate.issuer )
                 context.currentCertificate = issuerCertificate
-                self.isValid( issuerCertificate, context )            
+                return self.isValid( issuerCertificate, context )            
         else:
             return False
             
@@ -212,7 +212,7 @@ class CompositeValidationRule( CertificateValidationRule ):
         for rule in self._rules:
             
             if context.failNow:
-                return False
+                return RuleResult( False )
             
             result = None 
             
@@ -226,7 +226,7 @@ class CompositeValidationRule( CertificateValidationRule ):
                 if context.failEarly:
                     context.failNow = True
                 
-        return True  
+        return RuleResult( True )
     
       
 class BasicConstraintsRule( CertificateValidationRule ):
