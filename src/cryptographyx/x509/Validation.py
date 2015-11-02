@@ -9,12 +9,16 @@
 
 from abc import ABCMeta, abstractmethod
 import datetime
+import glob
 import logging
+import os
+import sys
 
 from cryptography import x509
+from cryptography.hazmat import backends
 
 
-class CertificateChainContext( object ):
+class PathValidationContext( object ):
     '''
     Provides a mutable context for the recursive CertificateChain.isValid()
     method that validates a certificate chain.
@@ -30,7 +34,7 @@ class CertificateChainContext( object ):
         
     def ruleFailed( self, rule ):
         '''
-        The default implementation is a no-op. See ErrorCollectingCertificateChainContext
+        The default implementation is a no-op. See ErrorCollectingContext
         for a context that can collect errors as they are detected and provides
         a property 'errors' to retrieve all errors after path validation finishes running.
         '''
@@ -47,14 +51,14 @@ class CertificateChainContext( object ):
         self._log = value 
         
             
-class ErrorCollectingCertificateChainContext( CertificateChainContext ):
+class ErrorCollectingContext( PathValidationContext ):
     '''
-    A concrete CertificateChainContext context that can collect errors as 
+    A concrete PathValidationContext context that can collect errors as 
     they are detected and provides a property 'errors', to retrieve all 
     errors after path validation finishes running.
     '''    
     def __init__( self ):  
-        CertificateChainContext.__init__( self )
+        PathValidationContext.__init__( self )
         self.currentCertificate = None
         self.currentPathLength = 0
         self.errors = []
@@ -63,7 +67,7 @@ class ErrorCollectingCertificateChainContext( CertificateChainContext ):
         self.errors.append( ( rule, result ) )
         
     def __str__( self ):
-        return 'ErrorCollectingCertificateChainContext errors=' + str( self.errors )
+        return 'ErrorCollectingContext errors=' + str( self.errors )
     
         
 class CertificateChain( object ):
@@ -91,7 +95,7 @@ class CertificateChain( object ):
         self._trustedRules = trustedRules
         self._untrustedRules = untrustedRules
         self._currentPathLength = 0
-        self._context = CertificateChainContext()
+        self._context = PathValidationContext()
         self._log = None
         
     @property
@@ -139,7 +143,7 @@ class CertificateChainDelegate( metaclass = ABCMeta ):
         '''
         Return true if the signature is valid for the given data.
         '''
-        pass
+        return False
     
     
 class RuleResult( object ):
@@ -190,17 +194,16 @@ class CompositeValidationRule( CertificateValidationRule ):
     
     This class is used to build rule sets.
     
-    If CertificateChainContext.failEarly is True, then this
+    If PathValidationContext.failEarly is True, then this
     collection of rules will raise a CertificateException on
     the first rule that fails.
     
     If False, all rules will be executed and failures will
-    be passed to CertificateChainContext.ruleFailed().
+    be passed to PathValidationContext.ruleFailed().
     
-    ErrorCollectingCertificateChainContext will collect all
-    failures in ErrorCollectingCertificateChainContext.errors.
+    ErrorCollectingContext will collect all
+    failures in ErrorCollectingContext.errors.
     '''
-    
     def __init__( self ):
         self._rules = []
         
@@ -216,18 +219,17 @@ class CompositeValidationRule( CertificateValidationRule ):
             
             result = None 
             
-            # try:
-            result = rule.isValid( certificate, context )
-            # except Exception as e:
-            # context.log.error( sys.exc_info()  ) # TODO: capture stack trace, log with logging...
+            try:
+                result = rule.isValid( certificate, context )
+            except Exception as e:
+                # TODO: capture stack trace, log with logging...
+                context.log.error( sys.exc_info() )  
                 
             if not result.isValid:
                 context.ruleFailed( rule, result )
                 if context.failEarly:
                     context.failNow = True
                 
-        return RuleResult( True )
-    
       
 class BasicConstraintsRule( CertificateValidationRule ):
     
@@ -393,5 +395,41 @@ class ListBackedCertificateLookup( TrustedCertificateLookup ):
             # Is this doing a value comparison? -rds
             if certificate.subject == subject:
                 return certificate
+  
     
+class DirectoryBackedCertificateLookup( TrustedCertificateLookup ):
+    '''
+    Searches a list of Certificates loaded from a directory on disk.
+    The encoding format of the certificates is assumed to be DER.
+    '''
+    def __init__( self, directoryPath, fileExtension = '.der' ):
+        self._directoryPath
+        self._fileExtension = fileExtension
+        self._trustedCertificates = None
         
+    def findCertificateFor( self, subject ):        
+        # Defer loading the Certificates from disk until they are requested.
+        #
+        if self._trustedCertificates is None:
+            
+            self._trustedCertificates = []
+            paths = glob.glob( os.path.join( self._directoryPath, '*.{0}'.format( self._fileExtension ) ) )
+            
+            for path in paths:
+                with open( path, 'rb' ) as inputFile:
+                    data = inputFile.read()
+                
+                if self._fileExtension == '.der':
+                    certificate = x509.load_der_x509_certificate( data, backends.default_backend() )
+                elif self._fileExtension == '.pem':
+                    certificate = x509.load_pem_x509_certificate( data, backends.default_backend() )
+                else:
+                    logging.ERROR( 'Unsupported Certificate file extension: {0}.'.format( self._fileExtension ) )
+                    # logging.WARNING( 'The file {0} does not have the specified extension: {1}.'.format( path, self._fileExtension ) )
+                    
+                self._trustedCertificates.append( certificate )
+      
+        for certificate in self._trustedCertificates:
+            # Is this doing a value comparison? -rds
+            if certificate.subject == subject:
+                return certificate

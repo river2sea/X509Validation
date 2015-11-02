@@ -10,7 +10,7 @@ from cryptographyx.x509.Validation import ListBackedCertificateLookup, \
     CertificateChain, ValidityPeriodRule, \
     BasicConstraintsRule, SignatureHashAlgorithmRule, \
 SignatureVerificationRule, CompositeValidationRule, \
-    ErrorCollectingCertificateChainContext, CertificateChainDelegate
+    ErrorCollectingContext, CertificateChainDelegate
 
 
 trustedKeyUsage = x509.KeyUsage( 
@@ -76,7 +76,7 @@ class ValidationTest( unittest.TestCase ):
         lookup = ListBackedCertificateLookup( [ trustedCertificate ] )
         delegate = TestCertificateChainDelegate()
         chain = CertificateChain( delegate, lookup, trustedRuleSet, untrustedRuleSet )
-        context = ErrorCollectingCertificateChainContext()
+        context = ErrorCollectingContext()
         context.delegate = delegate
         isValid = chain.isValid( untrustedCertificate, context )
         if not isValid:
