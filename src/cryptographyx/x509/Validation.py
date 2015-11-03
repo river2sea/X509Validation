@@ -4,15 +4,14 @@
 
 @see https://en.wikipedia.org/wiki/X.509
 @see https://en.wikipedia.org/wiki/Certification_path_validation_algorithm
-
+@see http://tools.ietf.org/html/rfc4158
 '''
 
 from abc import ABCMeta, abstractmethod
-import datetime
+import contextlib
 import glob
 import logging
 import os
-import sys
 
 from cryptography import x509
 from cryptography.hazmat import backends
@@ -24,7 +23,8 @@ class PathValidationContext( object ):
     method that validates a certificate chain.
     '''
     
-    def __init__( self ):  
+    def __init__( self, chain ):  
+        self._chain = chain
         self.currentCertificate = None
         self.currentPathLength = 0
         self.failEarly = False
@@ -32,13 +32,9 @@ class PathValidationContext( object ):
         self.delegate = None
         self._log = None
         
-    def ruleFailed( self, rule ):
-        '''
-        The default implementation is a no-op. See ErrorCollectingContext
-        for a context that can collect errors as they are detected and provides
-        a property 'errors' to retrieve all errors after path validation finishes running.
-        '''
-        pass
+    @property
+    def chain( self ):
+        return self._chain
     
     @property
     def log( self ):
@@ -50,25 +46,6 @@ class PathValidationContext( object ):
     def log( self, value ):
         self._log = value 
         
-            
-class ErrorCollectingContext( PathValidationContext ):
-    '''
-    A concrete PathValidationContext context that can collect errors as 
-    they are detected and provides a property 'errors', to retrieve all 
-    errors after path validation finishes running.
-    '''    
-    def __init__( self ):  
-        PathValidationContext.__init__( self )
-        self.currentCertificate = None
-        self.currentPathLength = 0
-        self.errors = []
-        
-    def ruleFailed( self, rule, result ):
-        self.errors.append( ( rule, result ) )
-        
-    def __str__( self ):
-        return 'ErrorCollectingContext errors=' + str( self.errors )
-    
         
 class CertificateChain( object ):
     '''
@@ -95,7 +72,6 @@ class CertificateChain( object ):
         self._trustedRules = trustedRules
         self._untrustedRules = untrustedRules
         self._currentPathLength = 0
-        self._context = PathValidationContext()
         self._log = None
         
     @property
@@ -111,7 +87,13 @@ class CertificateChain( object ):
     def log( self, value ):
         self._log = value 
         
-    def isValid( self, certificate, context ):
+    def isValid( self, certificate ):
+        context = PathValidationContext( self )
+        context.delegate = self._delegate
+        isValid = self._validate( certificate, context )
+        return isValid
+        
+    def _validate( self, certificate, context ):
         
         rules = None
         
@@ -131,250 +113,49 @@ class CertificateChain( object ):
             else:
                 issuerCertificate = self._trustedLookup.findCertificateFor( certificate.issuer )
                 context.currentCertificate = issuerCertificate
-                return self.isValid( issuerCertificate, context )            
+                context.currentPathLength = context.currentPathLength + 1
+                return self._validate( issuerCertificate, context )            
         else:
             return False
             
-
+    def findCertificateFor( self, subjectName ):
+        return self._trustedCertificates.findCertificateFor( subjectName )
+        
+        
 class CertificateChainDelegate( metaclass = ABCMeta ):
     
     @abstractmethod
-    def verifySignature( self, issuerCertificate, signatureAlgorithm, toBeSigned ):
+    def verifySignature( self, issuerCertificate, subjectCertificate ):
         '''
-        Return true if the signature is valid for the given data.
+        Return true if the subjectCertificate was signed with the issuerCertificate's private-key.
         '''
         return False
     
-    
-class RuleResult( object ):
-    
-    def __init__( self, isValid, errorMessage = None ):
-        self._isValid = isValid
-        self._errorMessage = errorMessage
-        
-    @property
-    def isValid( self ): 
-        return self._isValid
-
-    @property
-    def errorMessage( self ):
-        return self._errorMessage
-    
-    def __str__( self ):
-        return 'isValid={0} : errorMessage={1}'.format( self.isValid, self.errorMessage )
-    
-    def __repr__( self ):
-        return self.__str__()
-    
-    
-class CertificateValidationRule( metaclass = ABCMeta ):
-    '''
-    The base class for all validation rules.
-    '''
-    
     @abstractmethod
-    def isValid( self, certificate, context ):
+    def ruleFailed( self, ruleResult ):
         '''
-        Returns a RuleResult.
+        Called when a CertificateValidationRule fails.
         '''
         pass
     
-    def __str__( self ):
-        return self.__class__.__name__
-
-    def __repr__( self ):
-        return self.__str__()
-    
-    
-class CompositeValidationRule( CertificateValidationRule ):
-    '''
-    A CertificateValidationRule that aggregates an ordered list
-    of CertificateValidationRule and applies them in order to
-    the certificate passed to isValid(...).
-    
-    This class is used to build rule sets.
-    
-    If PathValidationContext.failEarly is True, then this
-    collection of rules will raise a CertificateException on
-    the first rule that fails.
-    
-    If False, all rules will be executed and failures will
-    be passed to PathValidationContext.ruleFailed().
-    
-    ErrorCollectingContext will collect all
-    failures in ErrorCollectingContext.errors.
-    '''
-    def __init__( self ):
-        self._rules = []
-        
-    def addRule( self, rule ):
-        self._rules.append( rule )
-        
-    def isValid( self, certificate, context ):
-        
-        for rule in self._rules:
-            
-            if context.failNow:
-                return RuleResult( False )
-            
-            result = None 
-            
-            try:
-                result = rule.isValid( certificate, context )
-            except Exception as e:
-                # TODO: capture stack trace, log with logging...
-                context.log.error( sys.exc_info() )  
-                
-            if not result.isValid:
-                context.ruleFailed( rule, result )
-                if context.failEarly:
-                    context.failNow = True
-                
-      
-class BasicConstraintsRule( CertificateValidationRule ):
-    
-    def __init__( self , allowCA, pathLength ):
-        self._allowCA = allowCA
-        self._pathLength = pathLength
-        
-    def isValid( self, certificate, context ):
-        
-        passed = False
-        caMessage = ''
-        pathLengthMessage = ''
-        errorMessage = None
-        
-        extension = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.BASIC_CONSTRAINTS )
-        
-        if self._allowCA == extension.value.ca:
-            passed = True
-        else:
-            caMessage = 'The "ca" constraint must be {0}.'.format( self._allowCA )
-        
-        if extension.value.path_length is not None and context.currentPathLength <= extension.value.path_length:
-            passed = True
-        else:
-            pathLengthMessage = 'The pathLength({0}) was exceeded: {1}.'.format( extension.value.path_length, context.currentPathLength )
-        
-        if not passed:
-            errorMessage = caMessage + ' ' + pathLengthMessage
-            
-        return RuleResult( passed, errorMessage = errorMessage )
-    
-
-class ValidityPeriodRule( CertificateValidationRule ):
-    
-    def isValid( self, certificate, context ):
-        
-        now = datetime.datetime.now()
-        
-        valid = now >= certificate.not_valid_before or now < certificate.not_valid_after
-        
-        if valid:
-            return RuleResult( valid )
-        else:
-            return RuleResult( valid, errorMessage = '{0} is not within {1} - {2}.'.format( now, certificate.not_valid_before, certificate.not_valid_after ) )
-    
-    
-class SignatureHashAlgorithmRule( CertificateValidationRule ):
-    
-    def __init__( self, hashAlgorithm ):
-        self._hashAlgorithm = hashAlgorithm
-        
-    def isValid( self, certificate, context ):
-        valid = self.hashAlgorithmsMatch( certificate.signature_hash_algorithm, self._hashAlgorithm )
-    
-        if valid:
-            return RuleResult( valid )
-        else:
-            return RuleResult( valid, errorMessage = 'Expected {0}, found {1}.'.format( self._hashAlgorithm, certificate.signature_hash_algorithm ) )
-        
-    def hashAlgorithmsMatch( self, a, b ):
-        return a.block_size == b.block_size and a.digest_size == b.digest_size and a.name == b.name
-    
-
-class SignatureVerificationRule( CertificateValidationRule ):
-    
-    def isValid( self, certificate, context ):
-        signatureAlgorithm = None
-        toBeSigned = None
-        valid = context.delegate.verifySignature( certificate, signatureAlgorithm, toBeSigned )
-
-        if valid:
-            return RuleResult( valid )
-        else:
-            return RuleResult( valid, errorMessage = 'Signature verification failed.' )
-        
-    
-class KeyUsageExtensionRule( CertificateValidationRule ):
-    
-    def __init__( self, allowedUsage ):
-        self._allowedUsage = allowedUsage
-        
-    def isValid( self, certificate, context ):
+    @abstractmethod
+    def shouldFailEarly( self ):
         '''
-        If an item in allowedUsage is True, then the corresponding item in the extension MAY(?) be True or False.
-        If an item in allowedUsage is False, then the corresponding item in the extension MUST be False.
+        Return True if path validation should abort when the first
+        rule fails, or if it should continue processing the certificate
+        so we can gather all of the errors in the certificate when it
+        contains more than one defect.
         '''
-        keyUsage = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.KEY_USAGE ).value
-        valid = self.usagesAreEqual( keyUsage, self._allowedUsage )
-        
-        if not valid:
-            return RuleResult( valid, errorMessage = 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ) )
-        else:
-            return( valid, None )
-        
-    def usagesAreEqual( self, keyUsageA, keyUsageB ):
-        itemsA = self.keyUsageItems( keyUsageA )
-        itemsB = self.keyUsageItems( keyUsageB )
-        return itemsA == itemsB
+        pass
     
-    def keyUsageItems( self, keyUsage ):
-        items = [ 
-           keyUsage.digital_signature,
-           keyUsage.content_commitment,
-           keyUsage.key_encipherment,
-           keyUsage.data_encipherment,
-           keyUsage.key_agreement,
-           keyUsage.key_cert_sign,
-           keyUsage.crl_sign ]
-        
-        if keyUsage.key_agreement:
-            items.append( keyUsage.encipher_only )
-            items.append( keyUsage.decipher_only )
-        
-        return items
 
-        
-class CriticalExtensionsRule( CertificateValidationRule ):
-    
-    def isValid( self, certificate, context ):
-        for extension in certificate.extensions:
-            if extension.critical:
-                pass
-            
-        return RuleResult( False, errorMessage = 'Not Implemented!' )
-        
- 
 class CertificateRevocationListLookup( metaclass = ABCMeta ):
     
     @abstractmethod
     def certificateIsListed( self, serialNumber ):
         pass
     
-    
-class CertificateRevocationListRule( CertificateValidationRule ):
-    
-    def __init__( self, crlLookup ):
-        self._crlLookup = crlLookup
-        
-    def isValid( self, certificate, context ):
-        if self._crlLookup.certificateIsListed( certificate.serial_number ):
-            return RuleResult( False, errorMessage = 'Certificate {0} : {1} is revoked.'.format( certificate.subject, certificate.serial_number ) )
-        else:
-            return RuleResult( True )
-                          
-                          
+                    
 class TrustedCertificateLookup( metaclass = ABCMeta ):
     
     @abstractmethod

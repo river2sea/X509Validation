@@ -1,3 +1,4 @@
+from abc import abstractmethod
 import os
 import unittest
 
@@ -5,35 +6,35 @@ from cryptography import *
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
-from cryptographyx.x509.Validation import ListBackedCertificateLookup, \
-    CertificateChain, ValidityPeriodRule, \
-    BasicConstraintsRule, SignatureHashAlgorithmRule, \
-SignatureVerificationRule, CompositeValidationRule, \
-    ErrorCollectingContext, CertificateChainDelegate
+from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
+    BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule
+from cryptographyx.x509.Validation import CertificateChainDelegate, \
+    ListBackedCertificateLookup, CertificateChain
 
 
 trustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
     True,  # content_commitment
     True,  # key_encipherment
-    False,  # data_encipherment
-    False,  # key_agreement
+    False, # data_encipherment
+    False, # key_agreement
     True,  # key_cert_sign
     True,  # crl_sign
-    False,  # encipher_only
-    False  # decipher_only
+    False, # encipher_only
+    False  # decipher_only    
  )
         
 untrustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
     True,  # content_commitment
     True,  # key_encipherment
-    False,  # data_encipherment
+    False, # data_encipherment
     True,  # key_agreement
-    False,  # key_cert_sign
-    False,  # crl_sign
-    False,  # encipher_only
+    False, # key_cert_sign
+    False, # crl_sign
+    False, # encipher_only
     False  # decipher_only
  )
 
@@ -56,31 +57,57 @@ untrustedRuleSet.addRule( SignatureVerificationRule() )
         
 class TestCertificateChainDelegate( CertificateChainDelegate ):
     
-    def verifySignature( self, issuerCertificate, signatureAlgorithm, toBeSigned ):
-        publicKey = issuerCertificate.public_key
-        HashAlgorithm = issuerCertificate.signature_hash_algorithm
-        # verifier = publicKey.verifier( subjectSignature, HashAlgorithm )
-        # verifier.update( data )
-        # return verifier.verify()  
-        return True      
+    def __init__( self ):
+        self._errors = []
         
+    def verifySignature( self, issuerCertificate, subjectCertificate ):
+        issuerPublicKey = issuerCertificate.public_key
+        hashAlgorithm = subjectCertificate.signature_hash_algorithm
+        if 1 == 1 : return True
+        tbsCertificate = subjectCertificate.tbs_certificate_bytes
+        subjectSignature = subjectCertificate.signature
+        verifier = issuerPublicKey.verifier( subjectSignature, padding.PSS( mgf=padding.MGF1( hashAlgorithm ), salt_length = padding.PSS.MAX_LENGTH ), hashAlgorithm )
+        verifier.update( tbsCertificate )
+        verified = verifier.verify()
+        return verified  
         
+    def ruleFailed( self, ruleResult ):
+        self._errors.append( ruleResult )
+    
+    def shouldFailEarly( self ):
+        '''
+        Return True if path validation should abort when the first
+        rule fails, or if it should continue processing the certificate
+        so we can gather all of the errors in the certificate when it
+        contains more than one defect.
+        '''
+        return False
+    
+            
 class ValidationTest( unittest.TestCase ):
     
     def test_CertificateValidation( self ):
+        print( os.path.abspath( os.curdir ) )
         testDirectory = os.path.dirname( __file__ )
-        data = self.loadBinaryFile( os.path.join( testDirectory, 'CACertificate.der' ) )
+        
+        trustedCertificates = []
+        data = self.loadBinaryFile( 'data/PKITS/certs/TrustAnchorRootCertificate.crt' )
         trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
-        data = self.loadBinaryFile( os.path.join( testDirectory, 'UserCertificate.der' ) )
-        untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
-        lookup = ListBackedCertificateLookup( [ trustedCertificate ] )
+        trustedCertificates.append( trustedCertificate )
+        data = self.loadBinaryFile( 'data/PKITS/certs/GoodCACert.crt' )
+        trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
+        trustedCertificates.append( trustedCertificate )        
+        lookup = ListBackedCertificateLookup( trustedCertificates )
+        
+        data = self.loadBinaryFile( 'data/PKITS/certs/GoodsubCACert.crt' )
+        untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )        
         delegate = TestCertificateChainDelegate()
+
+        verified = TestCertificateChainDelegate().verifySignature( trustedCertificate, untrustedCertificate ) 
+        print( 'Verified:', verified )
+        
         chain = CertificateChain( delegate, lookup, trustedRuleSet, untrustedRuleSet )
-        context = ErrorCollectingContext()
-        context.delegate = delegate
-        isValid = chain.isValid( untrustedCertificate, context )
-        if not isValid:
-            print( 'context:', context )
+        isValid = chain.isValid( untrustedCertificate )            
         self.assertTrue( isValid, 'Certificate is invalid.' )
         
     def loadBinaryFile( self, path ):
