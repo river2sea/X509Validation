@@ -47,6 +47,42 @@ class PathValidationContext( object ):
         self._log = value 
         
         
+class CertificateChainDelegate( metaclass = ABCMeta ):
+    
+    @abstractmethod
+    def currentTime( self ):
+        '''
+        Return the datetime.datetime that should be used to 
+        check a certificate's validity period.
+        @return: a datetime.datetime object.
+        '''
+        pass
+    
+    @abstractmethod
+    def verifySignature( self, issuerCertificate, subjectCertificate ):
+        '''
+        Return true if the subjectCertificate was signed with the issuerCertificate's private-key.
+        '''
+        pass
+    
+    @abstractmethod
+    def ruleFailed( self, ruleResult ):
+        '''
+        Called when a CertificateValidationRule fails.
+        '''
+        pass
+    
+    @abstractmethod
+    def shouldFailEarly( self ):
+        '''
+        Return True if path validation should abort when the first
+        rule fails, or if it should continue processing the certificate
+        so we can gather all of the errors in the certificate when it
+        contains more than one defect.
+        '''
+        pass
+    
+            
 class CertificateChain( object ):
     '''
     Configure with trusted certificates and a rule set for trusted certificates
@@ -119,34 +155,10 @@ class CertificateChain( object ):
             return False
             
     def findCertificateFor( self, subjectName ):
+        '''
+        Exposes the _trustedCertificates lookup for use by rules.
+        '''
         return self._trustedCertificates.findCertificateFor( subjectName )
-        
-        
-class CertificateChainDelegate( metaclass = ABCMeta ):
-    
-    @abstractmethod
-    def verifySignature( self, issuerCertificate, subjectCertificate ):
-        '''
-        Return true if the subjectCertificate was signed with the issuerCertificate's private-key.
-        '''
-        return False
-    
-    @abstractmethod
-    def ruleFailed( self, ruleResult ):
-        '''
-        Called when a CertificateValidationRule fails.
-        '''
-        pass
-    
-    @abstractmethod
-    def shouldFailEarly( self ):
-        '''
-        Return True if path validation should abort when the first
-        rule fails, or if it should continue processing the certificate
-        so we can gather all of the errors in the certificate when it
-        contains more than one defect.
-        '''
-        pass
     
 
 class CertificateRevocationListLookup( metaclass = ABCMeta ):
@@ -165,6 +177,10 @@ class TrustedCertificateLookup( metaclass = ABCMeta ):
       
 class ListBackedCertificateLookup( TrustedCertificateLookup ):
     '''
+    Looks up trusted certificates by subject name. The search
+    is iterative and the list of certificates can contain
+    multiple validation paths.
+    
     TODO: What is the correct behavior if two or more certificates
     are found with the same subject name? -rds
     '''
@@ -214,3 +230,31 @@ class DirectoryBackedCertificateLookup( TrustedCertificateLookup ):
             # Is this doing a value comparison? -rds
             if certificate.subject == subject:
                 return certificate
+
+
+class SingleOrderedPathCertificateLookup( TrustedCertificateLookup ):
+    '''
+    The certificates passed to the constructor must already be in
+    the correct lookup order where:
+    
+        trustedCertificates[ 0 ] is signed by trustedCertificates[ 1 ] is signed by trustedCertificates[ 2 ] ...
+        
+    The 'trustedCertificateList' certificate path will be pre-validated
+    so that we may use a fast dictionary lookup based on certificate.subject
+    in the findCertificateFor(...) method.
+    '''
+    
+    def __init__( self, trustedCertificateList ):
+        self._trustedCertificates = {}
+        self._preValidate( trustedCertificateList )
+        for certificate in trustedCertificateList:
+            self._trustedCertificates[ certificate.subject ] = certificate
+        
+    def findCertificateFor( self, subject ):
+        return self._trustedCertificates[ subject ]
+    
+    def _preValidate( self, trustedCertificateList ):
+        raise( ValueError( 'Invalid trusted certificate chain.' ) )
+    
+    
+    

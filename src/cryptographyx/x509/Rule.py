@@ -1,10 +1,17 @@
 from abc import ABCMeta, abstractmethod
-import datetime
 import sys
 
 from cryptography import x509
 
-
+# TODO: Put this somewhere more appropriate.
+#
+def extensionInCertificate( oid, certificate ):
+    for extension in certificate.extensions:
+        if extension.oid == oid:
+            return True
+    return False
+        
+        
 class CertificateValidationRule( metaclass = ABCMeta ):
     '''
     The base class for all validation rules.
@@ -62,12 +69,12 @@ class CompositeValidationRule( CertificateValidationRule ):
             except Exception:
                 # TODO: capture stack trace, log with logging...
                 context.log.error( sys.exc_info() )  
-                result = RuleResult( False, errorMessage =  str( sys.exc_info() ) ) 
+                result = RuleResult( False, errorMessage = str( sys.exc_info() ) ) 
 
             if result.isValid:
                 continue
             else:
-                context.delegate.ruleFailed( result  )
+                context.delegate.ruleFailed( result )
                 if context.delegate.shouldFailEarly():
                     context.failNow = True
         
@@ -75,7 +82,11 @@ class CompositeValidationRule( CertificateValidationRule ):
     
                 
 class RuleResult( object ):
-    
+    '''
+    TODO: Add positional 'certificate' parameter after 'isValid'.
+          Get the serial number and store it in _serialNumber.
+          Create a serialNumber property, and add it to __str__().
+    '''
     def __init__( self, isValid, errorMessage = None ):
         self._isValid = isValid
         self._errorMessage = errorMessage
@@ -96,9 +107,55 @@ class RuleResult( object ):
     
     
 class BasicConstraintsRule( CertificateValidationRule ):
+    '''
+    4.2.1.9.  Basic Constraints
+
+       The basic constraints extension identifies whether the subject of the
+       certificate is a CA and the maximum depth of valid certification
+       paths that include this certificate.
     
-    def __init__( self , allowCA, pathLength ):
-        self._allowCA = allowCA
+       The cA boolean indicates whether the certified public key may be used
+       to verify certificate signatures.  If the cA boolean is not asserted,
+       then the keyCertSign bit in the key usage extension MUST NOT be
+       asserted.  If the basic constraints extension is not present in a
+       version 3 certificate, or the extension is present but the cA boolean
+       is not asserted, then the certified public key MUST NOT be used to
+       verify certificate signatures.
+    
+       The pathLenConstraint field is meaningful only if the cA boolean is
+       asserted and the key usage extension, if present, asserts the
+       keyCertSign bit (Section 4.2.1.3).  In this case, it gives the
+       maximum number of non-self-issued intermediate certificates that may
+       follow this certificate in a valid certification path.  (Note: The
+       last certificate in the certification path is not an intermediate
+       certificate, and is not included in this limit.  Usually, the last
+       certificate is an end entity certificate, but it can be a CA
+       certificate.)  A pathLenConstraint of zero indicates that no non-
+       self-issued intermediate CA certificates may follow in a valid
+       certification path.  Where it appears, the pathLenConstraint field
+       MUST be greater than or equal to zero.  Where pathLenConstraint does
+       not appear, no limit is imposed.
+    
+       Conforming CAs MUST include this extension in all CA certificates
+       that contain public keys used to validate digital signatures on
+       certificates and MUST mark the extension as critical in such
+       certificates.  This extension MAY appear as a critical or non-
+       critical extension in CA certificates that contain public keys used
+       exclusively for purposes other than validating digital signatures on
+       certificates.  Such CA certificates include ones that contain public
+       keys used exclusively for validating digital signatures on CRLs and
+       ones that contain key management public keys used with certificate
+       enrollment protocols.  This extension MAY appear as a critical or
+       non-critical extension in end entity certificates.
+    
+       CAs MUST NOT include the pathLenConstraint field unless the cA
+       boolean is asserted and the key usage extension asserts the
+       keyCertSign bit.
+       
+       TODO: We need to know if the key usage extension includes keyCertSign.
+   '''    
+    def __init__( self , mustBeCA, pathLength ):
+        self._mustBeCA = mustBeCA
         self._pathLength = pathLength
         
     def isValid( self, certificate, context ):
@@ -107,21 +164,56 @@ class BasicConstraintsRule( CertificateValidationRule ):
         caMessage = ''
         pathLengthMessage = ''
         errorMessage = None
+        basicConstraints = None
+        keyCertSign = False
         
-        extension = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.BASIC_CONSTRAINTS )
-        
-        if self._allowCA == extension.value.ca:
-            passed = True
+        if extensionInCertificate( x509.oid.ExtensionOID.BASIC_CONSTRAINTS, certificate ):
+            basicConstraints = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.BASIC_CONSTRAINTS )
+            
+        if extensionInCertificate( x509.oid.ExtensionOID.KEY_USAGE, certificate ):
+            keyUsage = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.KEY_USAGE )
+            keyCertSign = keyUsage.value.key_cert_sign
+
+        if basicConstraints is not None:
+            
+            if basicConstraints.value.ca is not None:
+                if basicConstraints.value.ca == self._mustBeCA:
+                    passed = True
+                else:
+                    caMessage = 'The "ca" constraint is present and true, but is required to be false.'
+            else:
+                # The ca constraint is absent.
+                #
+                if not self._mustBeCA:
+                    passed = True
+                else:
+                    caMessage = 'The "ca" constraint is absent but is requied to be present and true.'
+                    
+            if basicConstraints.value.path_length is not None:
+                if keyCertSign and basicConstraints.value.ca:
+                    if context.currentPathLength <= basicConstraints.value.path_length:
+                        passed = True
+                    else:
+                        pathLengthMessage = 'The "pathLength" constraint is present ({0}) and has been exceeded.'.format( basicConstraints.value.path_length )
+                else:
+                        pathLengthMessage = 'The "pathLength" constraint is present ({0}) - Invalid keyCertSign({1}) and/or ca({2}).'.format( 
+                                                basicConstraints.value.path_length, keyCertSign, basicConstraints.value.ca )
+            else:
+                # No limit if pathLength is absent.
+                #
+                passed = True
+            
         else:
-            caMessage = 'The "ca" constraint must be {0}.'.format( self._allowCA )
-        
-        if extension.value.path_length is not None and context.currentPathLength <= extension.value.path_length:
-            passed = True
-        else:
-            pathLengthMessage = 'The pathLength({0}) was exceeded: {1}.'.format( extension.value.path_length, context.currentPathLength )
-        
-        if not passed:
-            errorMessage = caMessage + ' ' + pathLengthMessage
+            # The BasicConstraints basicConstraints is absent.
+            # Nothing to do for pathLength.
+            #
+            if not self._mustBeCA:
+                passed = True
+            else:
+                caMessage = 'The BasicConstraints basicConstraints is absent, and the "ca" constraint is required to be present and true.'
+    
+            if not passed:
+                errorMessage = caMessage + ' ' + pathLengthMessage
             
         return RuleResult( passed, errorMessage = errorMessage )
     
@@ -129,15 +221,12 @@ class BasicConstraintsRule( CertificateValidationRule ):
 class ValidityPeriodRule( CertificateValidationRule ):
     
     def isValid( self, certificate, context ):
-        
-        now = datetime.datetime.now()
-        
-        valid = now >= certificate.not_valid_before or now < certificate.not_valid_after
-        
+        currentTime = context.delegate.currentTime()
+        valid = currentTime >= certificate.not_valid_before or currentTime < certificate.not_valid_after
         if valid:
             return RuleResult( valid )
         else:
-            return RuleResult( valid, errorMessage = '{0} is not within {1} - {2}.'.format( now, certificate.not_valid_before, certificate.not_valid_after ) )
+            return RuleResult( valid, errorMessage = '{0} is not within {1} - {2}.'.format( currentTime, certificate.not_valid_before, certificate.not_valid_after ) )
     
     
 class SignatureHashAlgorithmRule( CertificateValidationRule ):
@@ -160,7 +249,7 @@ class SignatureHashAlgorithmRule( CertificateValidationRule ):
 class SignatureVerificationRule( CertificateValidationRule ):
     
     def isValid( self, certificate, context ):
-        issuerCertificate = context.chain.findCertificateFor( certificate.issuer  )
+        issuerCertificate = context.chain.findCertificateFor( certificate.issuer )
         valid = context.delegate.verifySignature( issuerCertificate, certificate )
         if valid:
             return RuleResult( valid )
@@ -227,9 +316,12 @@ class SubjectAlternativeNameRule( CertificateValidationRule ):
     def isValid( self, certificate, context ):
         if certificate.subject is None:
             # The subject alternate name MUST be present.
-            altName = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME )
-            if altName is None:
-                return RuleResult( False, errorMessage = 'subjectAltName is required but absent.' )
+            if extensionInCertificate( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME, certificate ):
+                altName = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME )
+                # TODO: Check structure of name...
+            else:
+                return RuleResult( False, errorMessage = 'subjectAltName({0} is required but absent.'.format( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME ) )
+            
         return RuleResult( True )
         
 
