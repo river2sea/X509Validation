@@ -15,6 +15,7 @@ import os
 
 from cryptography import x509
 from cryptography.hazmat import backends
+from cryptographyx.x509.Rule import RuleResult
 
 
 class PathValidationContext( object ):
@@ -29,6 +30,7 @@ class PathValidationContext( object ):
         self.currentPathLength = 0
         self.failEarly = False
         self.failNow = False
+        self.failed = False
         self.delegate = None
         self._log = None
         
@@ -126,10 +128,13 @@ class CertificateChain( object ):
     def isValid( self, certificate ):
         context = PathValidationContext( self )
         context.delegate = self._delegate
-        isValid = self._validate( certificate, context )
-        return isValid
+        self._validate( certificate, context )
+        return not context.failed
         
     def _validate( self, certificate, context ):
+        
+        if context.failed and context.failNow:
+            return False
         
         rules = None
         
@@ -148,10 +153,16 @@ class CertificateChain( object ):
                 return True
             else:
                 issuerCertificate = self._trustedLookup.findCertificateFor( certificate.issuer )
+                # TODO: Make issuer lookup a Rule.
+                if issuerCertificate is None:
+                    context.delegate.ruleFailed( RuleResult( False, errorMessage = "The issuer certificate was not found: {0}".format( certificate.issuer ) ) )
+                    context.failed = True
+                    return False
                 context.currentCertificate = issuerCertificate
                 context.currentPathLength = context.currentPathLength + 1
                 return self._validate( issuerCertificate, context )            
         else:
+            context.failed = True
             return False
             
     def findCertificateFor( self, subjectName ):

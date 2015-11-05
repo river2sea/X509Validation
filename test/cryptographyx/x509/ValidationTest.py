@@ -1,5 +1,4 @@
 import datetime
-import os
 import sys
 import unittest
 
@@ -13,31 +12,32 @@ from pyasn1.codec.der import decoder
 from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
 
 from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
-    BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule
+    BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule, \
+    KeyUsageExtensionRule
 from cryptographyx.x509.Validation import CertificateChainDelegate, \
     ListBackedCertificateLookup, CertificateChain
 
 
-trustedKeyUsage = x509.KeyUsage( 
-    True,  # digital_signature
-    True,  # content_commitment
-    True,  # key_encipherment
-    False,  # data_encipherment
-    False,  # key_agreement
-    True,  # key_cert_sign
-    True,  # crl_sign
-    False,  # encipher_only
-    False  # decipher_only    
- )
-        
 untrustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
     True,  # content_commitment
     True,  # key_encipherment
-    False,  # data_encipherment
-    True,  # key_agreement
+    True,  # data_encipherment
+    False,  # key_agreement
     False,  # key_cert_sign
     False,  # crl_sign
+    False,  # encipher_only
+    False  # decipher_only    
+ )
+        
+trustedKeyUsage = x509.KeyUsage( 
+    False,  # digital_signature
+    False,  # content_commitment
+    False,  # key_encipherment
+    False,  # data_encipherment
+    False,  # key_agreement
+    True,  # key_cert_sign
+    True,  # crl_sign
     False,  # encipher_only
     False  # decipher_only
  )
@@ -45,7 +45,7 @@ untrustedKeyUsage = x509.KeyUsage(
 trustedRuleSet = CompositeValidationRule()
 trustedRuleSet.addRule( ValidityPeriodRule() )
 trustedRuleSet.addRule( BasicConstraintsRule( True, 1 ) )
-# trustedRuleSet.addRule( KeyUsageExtensionRule( trustedKeyUsage ) )
+trustedRuleSet.addRule( KeyUsageExtensionRule( trustedKeyUsage ) )
 trustedRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
 # trustedRuleSet.addRule( CriticalExtensionsRule() )         
 trustedRuleSet.addRule( SignatureVerificationRule() )
@@ -53,7 +53,7 @@ trustedRuleSet.addRule( SignatureVerificationRule() )
 untrustedRuleSet = CompositeValidationRule()
 untrustedRuleSet.addRule( ValidityPeriodRule() )
 untrustedRuleSet.addRule( BasicConstraintsRule( False, 0 ) )
-# untrustedRuleSet.addRule( KeyUsageExtensionRule( untrustedKeyUsage ) )
+untrustedRuleSet.addRule( KeyUsageExtensionRule( untrustedKeyUsage ) )
 untrustedRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
 # untrustedRuleSet.addRule( CriticalExtensionsRule() )         
 untrustedRuleSet.addRule( SignatureVerificationRule() )
@@ -64,6 +64,10 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
     def __init__( self ):
         self._errors = []
         
+    @property
+    def errors( self ):
+        return self._errors
+    
     def currentTime( self ):
         return datetime.datetime.now()
 
@@ -72,12 +76,12 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
         This test is assuming a signature algorithm of sha256WithRSAEncryption/null-parameters.
         '''
         try:
-            print( 'Verifying the signature of the subject certificate({0}) with the issuerCertificate({1})...'.format( subjectCertificate, issuerCertificate ) )
+            # print( 'Verifying the signature of the subject certificate({0}) with the issuerCertificate({1})...'.format( subjectCertificate, issuerCertificate ) )
             issuerPublicKey = issuerCertificate.public_key()
             # Use the following to access the signatureAlgorithm and parameters. It would be nice
             # if we could get this directly from the x509.Certificate.
-            # spkiEncoding = subjectCertificate.public_key().public_bytes( Encoding.DER, PublicFormat.SubjectPublicKeyInfo )
-            # subjectPublicKeyInfo = decoder.decode( spkiEncoding, SubjectPublicKeyInfo() )
+            spkiEncoding = subjectCertificate.public_key().public_bytes( Encoding.DER, PublicFormat.SubjectPublicKeyInfo )
+            subjectPublicKeyInfo = decoder.decode( spkiEncoding, SubjectPublicKeyInfo() )
             hashAlgorithm = subjectCertificate.signature_hash_algorithm
             tbsCertificate = subjectCertificate.tbs_certificate_bytes
             subjectSignature = subjectCertificate.signature
@@ -106,31 +110,51 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
         '''
         return False
     
+    def dumpErrors( self ):   
+        for error in self.errors:
+            print( error )
+            
             
 class ValidationTest( unittest.TestCase ):
     
-    def test_CertificateValidation( self ):
-
+    @classmethod
+    def setUpClass( cls ):
         trustedCertificates = []
-        data = self.loadBinaryFile( 'data/PKITS/certs/TrustAnchorRootCertificate.crt' )
+        data = cls.loadBinaryFile( 'data/PKITS/certs/TrustAnchorRootCertificate.crt' )
         trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
         trustedCertificates.append( trustedCertificate )
-        data = self.loadBinaryFile( 'data/PKITS/certs/GoodCACert.crt' )
+        data = cls.loadBinaryFile( 'data/PKITS/certs/GoodCACert.crt' )
         trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
         trustedCertificates.append( trustedCertificate )        
-        data = self.loadBinaryFile( 'data/PKITS/certs/GoodsubCACert.crt' )
+        data = cls.loadBinaryFile( 'data/PKITS/certs/GoodsubCACert.crt' )
         trustedCertificates.append( trustedCertificate )        
-        lookup = ListBackedCertificateLookup( trustedCertificates )
+        cls.lookup = ListBackedCertificateLookup( trustedCertificates )
 
-        data = self.loadBinaryFile( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
+
+    def test_GoodCertificateValidation( self ):
+        data = ValidationTest.loadBinaryFile( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
         untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )  
-              
         delegate = TestCertificateChainDelegate() 
-        chain = CertificateChain( delegate, lookup, trustedRuleSet, untrustedRuleSet )
-        isValid = chain.isValid( untrustedCertificate )            
+        chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, untrustedRuleSet )
+        isValid = chain.isValid( untrustedCertificate ) 
+        delegate.dumpErrors()           
         self.assertTrue( isValid, 'Certificate is invalid.' )
+        print( 'Good chain finished processing.' )
         
-    def loadBinaryFile( self, path ):
+
+    def test_BadCertificateValidation( self ):
+        data = ValidationTest.loadBinaryFile( 'data/PKITS/certs/BadSignedCACert.crt' )
+        untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )  
+        delegate = TestCertificateChainDelegate() 
+        chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, trustedRuleSet )
+        isValid = chain.isValid( untrustedCertificate )  
+        delegate.dumpErrors()   
+        print( 'Bad chain finished processing.' )
+        self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
+        
+        
+    @classmethod
+    def loadBinaryFile( cls, path ):
         with open( path, 'rb' ) as inputFile:
             data = inputFile.read()  
             return data

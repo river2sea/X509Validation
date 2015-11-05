@@ -59,7 +59,7 @@ class CompositeValidationRule( CertificateValidationRule ):
         
         for rule in self._rules:
             
-            if context.failNow:
+            if context.failed and context.failNow:
                 return RuleResult( False )
             
             result = None 
@@ -68,12 +68,14 @@ class CompositeValidationRule( CertificateValidationRule ):
                 result = rule.isValid( certificate, context )
             except Exception:
                 # TODO: capture stack trace, log with logging...
+                print( sys.exc_info() )
                 context.log.error( sys.exc_info() )  
                 result = RuleResult( False, errorMessage = str( sys.exc_info() ) ) 
 
             if result.isValid:
                 continue
             else:
+                context.failed = True
                 context.delegate.ruleFailed( result )
                 if context.delegate.shouldFailEarly():
                     context.failNow = True
@@ -87,8 +89,9 @@ class RuleResult( object ):
           Get the serial number and store it in _serialNumber.
           Create a serialNumber property, and add it to __str__().
     '''
-    def __init__( self, isValid, errorMessage = None ):
+    def __init__( self, isValid, errorMessage = None, certificate = None ):
         self._isValid = isValid
+        self._certificate = certificate
         self._errorMessage = errorMessage
         
     @property
@@ -96,11 +99,15 @@ class RuleResult( object ):
         return self._isValid
 
     @property
+    def certificate( self ): 
+        return self._certificate
+    
+    @property
     def errorMessage( self ):
         return self._errorMessage
     
     def __str__( self ):
-        return 'isValid={0} : errorMessage={1}'.format( self.isValid, self.errorMessage )
+        return 'isValid={0} : errorMessage={1} : certificate={2}'.format( self.isValid, self.errorMessage, self.certificate )
     
     def __repr__( self ):
         return self.__str__()
@@ -215,7 +222,10 @@ class BasicConstraintsRule( CertificateValidationRule ):
             if not passed:
                 errorMessage = caMessage + ' ' + pathLengthMessage
             
-        return RuleResult( passed, errorMessage = errorMessage )
+        if passed:
+            return RuleResult( passed )
+        else:
+            return RuleResult( passed, errorMessage = errorMessage, certificate = certificate )
     
 
 class ValidityPeriodRule( CertificateValidationRule ):
@@ -226,7 +236,9 @@ class ValidityPeriodRule( CertificateValidationRule ):
         if valid:
             return RuleResult( valid )
         else:
-            return RuleResult( valid, errorMessage = '{0} is not within {1} - {2}.'.format( currentTime, certificate.not_valid_before, certificate.not_valid_after ) )
+            return RuleResult( valid,
+                               errorMessage = '{0} is not within {1} - {2}.'.format( currentTime,
+                               certificate.not_valid_before, certificate.not_valid_after ), certificate = certificate )
     
     
 class SignatureHashAlgorithmRule( CertificateValidationRule ):
@@ -240,7 +252,9 @@ class SignatureHashAlgorithmRule( CertificateValidationRule ):
         if valid:
             return RuleResult( valid )
         else:
-            return RuleResult( valid, errorMessage = 'Expected {0}, found {1}.'.format( self._hashAlgorithm, certificate.signature_hash_algorithm ) )
+            return RuleResult( valid,
+                               errorMessage = 'Expected {0}, found {1}.'.format( self._hashAlgorithm, certificate.signature_hash_algorithm ),
+                               certificate = certificate )
         
     def hashAlgorithmsMatch( self, a, b ):
         return a.block_size == b.block_size and a.digest_size == b.digest_size and a.name == b.name
@@ -249,13 +263,17 @@ class SignatureHashAlgorithmRule( CertificateValidationRule ):
 class SignatureVerificationRule( CertificateValidationRule ):
     
     def isValid( self, certificate, context ):
-        issuerCertificate = context.chain.findCertificateFor( certificate.issuer )
-        valid = context.delegate.verifySignature( issuerCertificate, certificate )
-        if valid:
-            return RuleResult( valid )
-        else:
-            return RuleResult( valid, errorMessage = 'Signature verification failed.' )
-        
+        try:
+            issuerCertificate = context.chain.findCertificateFor( certificate.issuer )
+            valid = context.delegate.verifySignature( issuerCertificate, certificate )
+            if valid:
+                return RuleResult( valid )
+            else:
+                return RuleResult( valid, errorMessage = 'Signature verification failed.', certificate = certificate )
+        except Exception as e:
+            print( sys.exc_info() )
+            return RuleResult( valid, errorMessage = 'Signature verification failed: {0}'.format( str( e ) ), certificate = certificate )
+    
     
 class KeyUsageExtensionRule( CertificateValidationRule ):
     
@@ -271,9 +289,14 @@ class KeyUsageExtensionRule( CertificateValidationRule ):
         valid = self.usagesAreEqual( keyUsage, self._allowedUsage )
         
         if not valid:
-            return RuleResult( valid, errorMessage = 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ) )
+            keyUsageBits = self.keyUsageAsPseudoBits( keyUsage )
+            allowedUsageBits = self.keyUsageAsPseudoBits( self._allowedUsage )
+            
+            return RuleResult( valid,
+                               errorMessage = keyUsageBits + ' : ' + allowedUsageBits + ' : ' + 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ),
+                               certificate = certificate )
         else:
-            return( valid, None )
+            return RuleResult( valid, None )
         
     def usagesAreEqual( self, keyUsageA, keyUsageB ):
         itemsA = self.keyUsageItems( keyUsageA )
@@ -296,6 +319,16 @@ class KeyUsageExtensionRule( CertificateValidationRule ):
         
         return items
 
+    def keyUsageAsPseudoBits( self, keyUsage ):
+        items = self.keyUsageItems( keyUsage )
+        bits = []
+        for item in items:
+            if item:
+                bits.append( '1' )
+            else:
+                bits.append( '0' )
+        return ''.join( bits )
+
         
 class CriticalExtensionsRule( CertificateValidationRule ):
 
@@ -304,7 +337,7 @@ class CriticalExtensionsRule( CertificateValidationRule ):
             if extension.critical:
                 pass
             
-        return RuleResult( False, errorMessage = 'Not Implemented!' )
+        return RuleResult( False, errorMessage = 'Not Implemented!', certificate = certificate )
             
  
 class SubjectAlternativeNameRule( CertificateValidationRule ):
@@ -320,7 +353,9 @@ class SubjectAlternativeNameRule( CertificateValidationRule ):
                 altName = certificate.extensions.get_extension_for_oid( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME )
                 # TODO: Check structure of name...
             else:
-                return RuleResult( False, errorMessage = 'subjectAltName({0} is required but absent.'.format( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME ) )
+                return RuleResult( False,
+                                   errorMessage = 'subjectAltName({0} is required but absent.'.format( x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME ),
+                                   certificate = certificate )
             
         return RuleResult( True )
         
@@ -332,7 +367,9 @@ class CertificateRevocationListRule( CertificateValidationRule ):
         
     def isValid( self, certificate, context ):
         if self._crlLookup.certificateIsListed( certificate.serial_number ):
-            return RuleResult( False, errorMessage = 'Certificate {0} : {1} is revoked.'.format( certificate.subject, certificate.serial_number ) )
+            return RuleResult( False,
+                               errorMessage = 'Certificate {0} : {1} is revoked.'.format( certificate.subject, certificate.serial_number ),
+                               certificate = certificate )
         else:
             return RuleResult( True )
                           
