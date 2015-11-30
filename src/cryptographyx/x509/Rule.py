@@ -49,12 +49,16 @@ class CompositeValidationRule( CertificateValidationRule ):
     ErrorCollectingContext will collect all
     failures in ErrorCollectingContext.errors.
     '''
-    def __init__( self ):
-        self._rules = []
-        
+    def __init__( self , rules = [] ):
+        self._rules = rules
+    
     def addRule( self, rule ):
         self._rules.append( rule )
         
+    @property
+    def rules( self ):
+        return list( self._rules )
+    
     def isValid( self, certificate, context ):
         
         for rule in self._rules:
@@ -293,7 +297,7 @@ class KeyUsageExtensionRule( CertificateValidationRule ):
             allowedUsageBits = self.keyUsageAsPseudoBits( self._allowedUsage )
             
             return RuleResult( valid,
-                               errorMessage = keyUsageBits + ' : ' + allowedUsageBits + ' : ' + 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ),
+                               errorMessage = 'expected: ' + allowedUsageBits + ' - found: ' + keyUsageBits + ' : ' + 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ),
                                certificate = certificate )
         else:
             return RuleResult( valid, None )
@@ -366,9 +370,9 @@ class CertificateRevocationListRule( CertificateValidationRule ):
         self._crlLookup = crlLookup
         
     def isValid( self, certificate, context ):
-        if self._crlLookup.certificateIsListed( certificate.serial_number ):
+        if self._crlLookup.certificateIsListed( certificate.serial ):
             return RuleResult( False,
-                               errorMessage = 'Certificate {0} : {1} is revoked.'.format( certificate.subject, certificate.serial_number ),
+                               errorMessage = 'Certificate {0} : {1} is revoked.'.format( certificate.subject, certificate.serial ),
                                certificate = certificate )
         else:
             return RuleResult( True )

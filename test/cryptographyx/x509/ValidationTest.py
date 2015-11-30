@@ -13,10 +13,23 @@ from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
 
 from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
     BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule, \
-    KeyUsageExtensionRule
+    KeyUsageExtensionRule, CertificateRevocationListRule
 from cryptographyx.x509.Validation import CertificateChainDelegate, \
-    ListBackedCertificateLookup, CertificateChain
+    ListBackedCertificateLookup, CertificateChain, \
+    CertificateRevocationListLookup
 
+
+trustedKeyUsage = x509.KeyUsage( 
+    False,  # digital_signature
+    False,  # content_commitment
+    False,  # key_encipherment
+    False,  # data_encipherment
+    False,  # key_agreement
+    True,  # key_cert_sign
+    True,  # crl_sign
+    False,  # encipher_only
+    False  # decipher_only
+ )
 
 untrustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
@@ -28,18 +41,6 @@ untrustedKeyUsage = x509.KeyUsage(
     False,  # crl_sign
     False,  # encipher_only
     False  # decipher_only    
- )
-        
-trustedKeyUsage = x509.KeyUsage( 
-    False,  # digital_signature
-    False,  # content_commitment
-    False,  # key_encipherment
-    False,  # data_encipherment
-    False,  # key_agreement
-    True,  # key_cert_sign
-    True,  # crl_sign
-    False,  # encipher_only
-    False  # decipher_only
  )
 
 trustedRuleSet = CompositeValidationRule()
@@ -114,48 +115,69 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
         for error in self.errors:
             print( error )
             
-            
+
+class TestCRLLookup( CertificateRevocationListLookup ):       
+    
+    def __init__( self ):
+        self._serialNumbers = []
+        
+    def addSerialNumber( self, serialNumber ):
+        self._serialNumbers.append( serialNumber )
+        
+    def certificateIsListed( self, serialNumber ):
+        if serialNumber in self._serialNumbers:
+            return True
+        return False
+    
+     
 class ValidationTest( unittest.TestCase ):
     
     @classmethod
     def setUpClass( cls ):
         trustedCertificates = []
-        data = cls.loadBinaryFile( 'data/PKITS/certs/TrustAnchorRootCertificate.crt' )
-        trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
+        trustedCertificate = cls.loadDERCertifcate( 'data/PKITS/certs/TrustAnchorRootCertificate.crt' )
         trustedCertificates.append( trustedCertificate )
-        data = cls.loadBinaryFile( 'data/PKITS/certs/GoodCACert.crt' )
-        trustedCertificate = x509.load_der_x509_certificate( data, default_backend() )
+        trustedCertificate = cls.loadDERCertifcate( 'data/PKITS/certs/GoodCACert.crt' )
         trustedCertificates.append( trustedCertificate )        
-        data = cls.loadBinaryFile( 'data/PKITS/certs/GoodsubCACert.crt' )
+        trustedCertificate = cls.loadDERCertifcate( 'data/PKITS/certs/GoodsubCACert.crt' )
         trustedCertificates.append( trustedCertificate )        
         cls.lookup = ListBackedCertificateLookup( trustedCertificates )
 
-
+    @classmethod
+    def loadDERCertifcate( cls, path ):
+        with open( path, 'rb' ) as inputFile:
+            data = inputFile.read()  
+            certificate = x509.load_der_x509_certificate( data, default_backend() )
+            return certificate
+                
     def test_GoodCertificateValidation( self ):
-        data = ValidationTest.loadBinaryFile( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
-        untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )  
+        untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, untrustedRuleSet )
         isValid = chain.isValid( untrustedCertificate ) 
         delegate.dumpErrors()           
         self.assertTrue( isValid, 'Certificate is invalid.' )
-        print( 'Good chain finished processing.' )
+        # print( 'Good chain finished processing.' )
         
-
     def test_BadCertificateValidation( self ):
-        data = ValidationTest.loadBinaryFile( 'data/PKITS/certs/BadSignedCACert.crt' )
-        untrustedCertificate = x509.load_der_x509_certificate( data, default_backend() )  
+        untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/BadSignedCACert.crt' )
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, trustedRuleSet )
         isValid = chain.isValid( untrustedCertificate )  
-        delegate.dumpErrors()   
-        print( 'Bad chain finished processing.' )
+        # delegate.dumpErrors()   
+        # print( 'Bad chain finished processing.' )
         self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
         
-        
-    @classmethod
-    def loadBinaryFile( cls, path ):
-        with open( path, 'rb' ) as inputFile:
-            data = inputFile.read()  
-            return data
-        
+
+    def test_CRLLookup( self ):
+        crlRuleSet = CompositeValidationRule( rules = untrustedRuleSet.rules )       
+        untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
+        crlLookup = TestCRLLookup()
+        crlLookup.addSerialNumber( untrustedCertificate.serial )
+        crlRuleSet.addRule( CertificateRevocationListRule( crlLookup ) )
+        delegate = TestCertificateChainDelegate() 
+        chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, crlRuleSet )
+        isValid = chain.isValid( untrustedCertificate )  
+        # delegate.dumpErrors()   
+        # print( 'Bad chain finished processing.' )
+        self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
