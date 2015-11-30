@@ -2,11 +2,11 @@
 
 from setuptools import setup, find_packages
 DESCRIPTION = ( "X.509v3 Certificate Validation built on cryptography.io" )
-with open( 'README.rst' ) as f:
-    LONG_DESCRIPTION = f.read()
+# with open( 'README.rst' ) as f:
+#    LONG_DESCRIPTION = f.read()
 
 install_requires = [
-    'cryptograpy>=0.1.1'
+    'cryptograpy>=1.1'
 ]
 
 setup( 
