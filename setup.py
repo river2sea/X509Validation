@@ -6,7 +6,7 @@ DESCRIPTION = ( "X.509v3 Certificate Validation built on cryptography.io" )
 #    LONG_DESCRIPTION = f.read()
 
 install_requires = [
-    'cryptograpy>=1.1.1'
+    'cryptography>=1.1.1'
 ]
 
 setup( 
