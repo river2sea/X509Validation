@@ -10,7 +10,7 @@ install_requires = [
 ]
 
 setup( 
-    name = 'Eve',
+    name = 'cryptographyx.x509Validation',
     version = '0.0.1.dev0',
     description = DESCRIPTION,
     long_description = DESCRIPTION,
@@ -25,9 +25,9 @@ setup(
     tests_require = [],
     classifiers = [
         'Development Status :: 4 - Beta',
-        'Environment :: Web Environment',
+        'Environment :: Any',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: BSD License',
+        'License :: MIT License',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
         'Programming Language :: Python :: 2.7',
