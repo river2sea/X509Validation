@@ -1,8 +1,16 @@
 from abc import ABCMeta, abstractmethod
 import sys
+import traceback
 
 from cryptography import x509
 
+
+def dumpTraceback():
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    traceback.print_tb( exc_traceback, limit=1, file=sys.stdout )
+    traceback.print_exception( exc_type, exc_value, exc_traceback, file=sys.stdout )
+    
+    
 # TODO: Put this somewhere more appropriate.
 #
 def extensionInCertificate( oid, certificate ):
@@ -72,9 +80,9 @@ class CompositeValidationRule( CertificateValidationRule ):
                 result = rule.isValid( certificate, context )
             except Exception:
                 # TODO: capture stack trace, log with logging...
-                print( sys.exc_info() )
-                context.log.error( sys.exc_info() )  
-                result = RuleResult( False, errorMessage = str( sys.exc_info() ) ) 
+                dumpTraceback()
+                context.log.error( traceback.extract_stack() )  
+                result = RuleResult( False, errorMessage = traceback.extract_stack() ) 
 
             if result.isValid:
                 continue
@@ -275,6 +283,7 @@ class SignatureVerificationRule( CertificateValidationRule ):
             else:
                 return RuleResult( valid, errorMessage = 'Signature verification failed.', certificate = certificate )
         except Exception as e:
+            dumpTraceback()
             print( sys.exc_info() )
             return RuleResult( valid, errorMessage = 'Signature verification failed: {0}'.format( str( e ) ), certificate = certificate )
     

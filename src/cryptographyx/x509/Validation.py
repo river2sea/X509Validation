@@ -8,16 +8,23 @@
 '''
 
 from abc import ABCMeta, abstractmethod
-import contextlib
 import glob
 import logging
 import os
+import sys
+import traceback
 
 from cryptography import x509
 from cryptography.hazmat import backends
 from cryptographyx.x509.Rule import RuleResult
 
 
+def dumpTraceback():
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    traceback.print_tb( exc_traceback, limit=1, file=sys.stdout )
+    traceback.print_exception( exc_type, exc_value, exc_traceback, file=sys.stdout )
+    
+    
 class PathValidationContext( object ):
     '''
     Provides a mutable context for the recursive CertificateChain.isValid()

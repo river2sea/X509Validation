@@ -1,5 +1,6 @@
 import datetime
 import sys
+import traceback
 import unittest
 
 from cryptography import *
@@ -8,15 +9,14 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from pyasn1.codec.der import decoder
-from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
-
 from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
     BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule, \
     KeyUsageExtensionRule, CertificateRevocationListRule
 from cryptographyx.x509.Validation import CertificateChainDelegate, \
     ListBackedCertificateLookup, CertificateChain, \
     CertificateRevocationListLookup
+from pyasn1.codec.der import decoder
+from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
 
 
 trustedKeyUsage = x509.KeyUsage( 
@@ -58,8 +58,14 @@ untrustedRuleSet.addRule( KeyUsageExtensionRule( untrustedKeyUsage ) )
 untrustedRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
 # untrustedRuleSet.addRule( CriticalExtensionsRule() )         
 untrustedRuleSet.addRule( SignatureVerificationRule() )
+       
         
-        
+def dumpTraceback():
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    traceback.print_tb( exc_traceback, limit=1, file=sys.stdout )
+    traceback.print_exception( exc_type, exc_value, exc_traceback, file=sys.stdout )
+   
+           
 class TestCertificateChainDelegate( CertificateChainDelegate ):
     
     def __init__( self ):
@@ -92,7 +98,7 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
             verifier.update( tbsCertificate )
             verifier.verify()
         except Exception as e:
-            print( sys.exc_info() )
+            dumpTraceback()
             # TODO: Log the exception info.
             return False
         
