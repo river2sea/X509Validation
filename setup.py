@@ -22,7 +22,7 @@ setup(
     #packages = find_packages(),
     #package_dir={"": "src"},
     packages=[
-        "src/x509Validation"
+        "x509Validation"
     ],
     test_suite = "ValidationTest.py",
     install_requires = install_requires,
