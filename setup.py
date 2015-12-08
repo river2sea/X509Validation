@@ -19,7 +19,11 @@ setup(
     url = 'https://github.com/river2sea/X509Validation',
     license = 'MIT',
     platforms = ["any"],
-    packages = find_packages(),
+    #packages = find_packages(),
+    #package_dir={"": "src"},
+    packages=[
+        "src/cryptographyx",
+    ]
     test_suite = "cryptographyx.ValidationTest.py",
     install_requires = install_requires,
     tests_require = [],
@@ -37,8 +41,4 @@ setup(
         'Topic :: Cryptography :: X.509',
     ],
     
-    package_dir={"": "src"},
-    packages=[
-        "cryptographyx",
-    ]
  )
