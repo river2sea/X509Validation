@@ -4,7 +4,7 @@ import uuid
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
-from cryptographyx.x509.ValidationTest import trustedKeyUsage, untrustedKeyUsage
+from x509Validation.ValidationTest import trustedKeyUsage, untrustedKeyUsage
 
 
 class Builder( object ):

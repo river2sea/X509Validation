@@ -10,7 +10,7 @@ install_requires = [
 ]
 
 setup( 
-    name = 'cryptographyx.x509Validation',
+    name = 'x509Validation',
     version = '0.0.1.dev0',
     description = DESCRIPTION,
     long_description = DESCRIPTION,
@@ -22,9 +22,9 @@ setup(
     #packages = find_packages(),
     #package_dir={"": "src"},
     packages=[
-        "src/cryptographyx",
-    ]
-    test_suite = "cryptographyx.ValidationTest.py",
+        "src/x509Validation"
+    ],
+    test_suite = "ValidationTest.py",
     install_requires = install_requires,
     tests_require = [],
     classifiers = [

@@ -16,7 +16,7 @@ import traceback
 
 from cryptography import x509
 from cryptography.hazmat import backends
-from cryptographyx.x509.Rule import RuleResult
+from x509Validation.Rule import RuleResult
 
 
 def dumpTraceback():
