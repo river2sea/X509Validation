@@ -11,20 +11,20 @@ install_requires = [
 
 setup( 
     name = 'x509Validation',
-    version = '0.0.1.dev0',
+    version = '0.0.2.dev0',
     description = DESCRIPTION,
     long_description = DESCRIPTION,
     author = 'Rowland Smith',
     author_email = 'rowland@river2sea.org',
     url = 'https://github.com/river2sea/X509Validation',
     license = 'MIT',
-    platforms = ["any"],
+    platforms = [ "any" ],
     #packages = find_packages(),
-    #package_dir={"": "src"},
+    package_dir={ "": "src" },
     packages=[
         "x509Validation"
     ],
-    test_suite = "ValidationTest.py",
+    test_suite = "x509ValidationTest.ValidationTest.py",
     install_requires = install_requires,
     tests_require = [],
     classifiers = [
