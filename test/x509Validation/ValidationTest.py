@@ -9,16 +9,14 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from pyasn1.codec.der import decoder
-from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
 
-from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
+from .Rule import CompositeValidationRule, ValidityPeriodRule, \
     BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule, \
     KeyUsageExtensionRule, CertificateRevocationListRule
-from cryptographyx.x509.Validation import CertificateChainDelegate, \
+from .Validation import CertificateChainDelegate, \
     ListBackedCertificateLookup, CertificateChain, \
     CertificateRevocationListLookup
+
 
 #xyz = x509.KeyUsage(digital_signature, content_commitment, key_encipherment, data_encipherment, key_agreement, key_cert_sign, crl_sign, encipher_only, decipher_only)
 trustedKeyUsage = x509.KeyUsage( 
@@ -33,8 +31,6 @@ trustedKeyUsage = x509.KeyUsage(
     False  # decipher_only
  )
 
-print( "trustedKeyUsage:", trustedKeyUsage )
-
 untrustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
     True,  # content_commitment (aka non_repudiation)
@@ -46,8 +42,6 @@ untrustedKeyUsage = x509.KeyUsage(
     False,  # encipher_only
     False  # decipher_only    
  )
-
-print( "untrustedKeyUsage:", untrustedKeyUsage )
 
 trustedRuleSet = CompositeValidationRule( name = "Trusted Rule Set")
 trustedRuleSet.addRule( ValidityPeriodRule() )
@@ -65,7 +59,15 @@ untrustedRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
 # untrustedRuleSet.addRule( CriticalExtensionsRule() )         
 untrustedRuleSet.addRule( SignatureVerificationRule() )
        
-        
+crlRuleSet = CompositeValidationRule( name = "CRL Rule Set" )
+crlRuleSet.addRule( ValidityPeriodRule() )
+crlRuleSet.addRule( BasicConstraintsRule( False, 0 ) )
+crlRuleSet.addRule( KeyUsageExtensionRule( untrustedKeyUsage ) )
+crlRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
+# crlRuleSet.addRule( CriticalExtensionsRule() )         
+crlRuleSet.addRule( SignatureVerificationRule() )
+
+
 def dumpTraceback():
     exc_type, exc_value, exc_traceback = sys.exc_info()
     traceback.print_tb( exc_traceback, limit=1, file=sys.stdout )
@@ -164,17 +166,16 @@ class ValidationTest( unittest.TestCase ):
             delegate.dumpErrors()           
         self.assertTrue( isValid, 'Certificate is invalid.' )
         
-    def xtest_BadCertificateValidation( self ):
+    def test_BadCertificateValidation( self ):
         untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/BadSignedCACert.crt' )
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, trustedRuleSet )
         isValid = chain.isValid( untrustedCertificate )  
-        if not isValid:
+        if isValid:
             delegate.dumpErrors()   
         self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
         
-    def xtest_CRLLookup( self ):
-        crlRuleSet = CompositeValidationRule( rules = untrustedRuleSet.rules )       
+    def test_CRLLookup( self ):
         untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
         crlLookup = TestCRLLookup()
         crlLookup.addSerialNumber( untrustedCertificate.serial )
