@@ -56,16 +56,26 @@ class CompositeValidationRule( CertificateValidationRule ):
     
     ErrorCollectingContext will collect all
     failures in ErrorCollectingContext.errors.
+    
+    @param rules a list of CertificateValidationRule objects.
+    @param name an optional name that can be useful for debugging.
     '''
-    def __init__( self , rules = [] ):
-        self._rules = rules
+    # Why, when we use the init with rules = [], and we don't pass a 'rules'
+    # parameter to the init, does the 'rules' param contain the LAST rules that
+    # were used (i.e., test this with ValidationTest and trustedRules/untrustedRules.
+    #def __init__( self, rules = [], name = None ):
+    
+    def __init__( self, name = None ):
+        CertificateValidationRule.__init__( self )
+        self._rules = []
+        self._name = name
     
     def addRule( self, rule ):
         self._rules.append( rule )
         
-    @property
-    def rules( self ):
-        return list( self._rules )
+    #@property
+    #def rules( self ):
+    #    return list( self._rules )
     
     def isValid( self, certificate, context ):
         
@@ -78,11 +88,8 @@ class CompositeValidationRule( CertificateValidationRule ):
             
             try:
                 result = rule.isValid( certificate, context )
-            except Exception:
-                # TODO: capture stack trace, log with logging...
-                dumpTraceback()
-                context.log.error( traceback.extract_stack() )  
-                result = RuleResult( False, errorMessage = traceback.extract_stack() ) 
+            except Exception as e:
+                raise e 
 
             if result.isValid:
                 continue
@@ -206,7 +213,7 @@ class BasicConstraintsRule( CertificateValidationRule ):
                 if not self._mustBeCA:
                     passed = True
                 else:
-                    caMessage = 'The "ca" constraint is absent but is requied to be present and true.'
+                    caMessage = 'The "ca" constraint is absent but is required to be present and true.'
                     
             if basicConstraints.value.path_length is not None:
                 if keyCertSign and basicConstraints.value.ca:
@@ -275,6 +282,7 @@ class SignatureHashAlgorithmRule( CertificateValidationRule ):
 class SignatureVerificationRule( CertificateValidationRule ):
     
     def isValid( self, certificate, context ):
+        valid = False
         try:
             issuerCertificate = context.chain.findCertificateFor( certificate.issuer )
             valid = context.delegate.verifySignature( issuerCertificate, certificate )
@@ -306,7 +314,7 @@ class KeyUsageExtensionRule( CertificateValidationRule ):
             allowedUsageBits = self.keyUsageAsPseudoBits( self._allowedUsage )
             
             return RuleResult( valid,
-                               errorMessage = 'expected: ' + allowedUsageBits + ' - found: ' + keyUsageBits + ' : ' + 'keyUsage({0}) is not equal to allowedUsage({1})'.format( keyUsage, self._allowedUsage ),
+                               errorMessage = '\nExpected: ' + allowedUsageBits + '\nFound   : ' + keyUsageBits + '\nThe allowedUsage({0}) and keyUsage({1}) are not equal'.format(  self._allowedUsage, keyUsage ),
                                certificate = certificate )
         else:
             return RuleResult( valid, None )

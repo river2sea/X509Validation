@@ -5,20 +5,22 @@ import unittest
 
 from cryptography import *
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from pyasn1.codec.der import decoder
+from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
+
 from cryptographyx.x509.Rule import CompositeValidationRule, ValidityPeriodRule, \
     BasicConstraintsRule, SignatureHashAlgorithmRule, SignatureVerificationRule, \
     KeyUsageExtensionRule, CertificateRevocationListRule
 from cryptographyx.x509.Validation import CertificateChainDelegate, \
     ListBackedCertificateLookup, CertificateChain, \
     CertificateRevocationListLookup
-from pyasn1.codec.der import decoder
-from pyasn1_modules.rfc2459 import SubjectPublicKeyInfo
 
-
+#xyz = x509.KeyUsage(digital_signature, content_commitment, key_encipherment, data_encipherment, key_agreement, key_cert_sign, crl_sign, encipher_only, decipher_only)
 trustedKeyUsage = x509.KeyUsage( 
     False,  # digital_signature
     False,  # content_commitment
@@ -31,9 +33,11 @@ trustedKeyUsage = x509.KeyUsage(
     False  # decipher_only
  )
 
+print( "trustedKeyUsage:", trustedKeyUsage )
+
 untrustedKeyUsage = x509.KeyUsage( 
     True,  # digital_signature
-    True,  # content_commitment
+    True,  # content_commitment (aka non_repudiation)
     True,  # key_encipherment
     True,  # data_encipherment
     False,  # key_agreement
@@ -43,7 +47,9 @@ untrustedKeyUsage = x509.KeyUsage(
     False  # decipher_only    
  )
 
-trustedRuleSet = CompositeValidationRule()
+print( "untrustedKeyUsage:", untrustedKeyUsage )
+
+trustedRuleSet = CompositeValidationRule( name = "Trusted Rule Set")
 trustedRuleSet.addRule( ValidityPeriodRule() )
 trustedRuleSet.addRule( BasicConstraintsRule( True, 1 ) )
 trustedRuleSet.addRule( KeyUsageExtensionRule( trustedKeyUsage ) )
@@ -51,7 +57,7 @@ trustedRuleSet.addRule( SignatureHashAlgorithmRule( hashes.SHA256 ) )
 # trustedRuleSet.addRule( CriticalExtensionsRule() )         
 trustedRuleSet.addRule( SignatureVerificationRule() )
     
-untrustedRuleSet = CompositeValidationRule()
+untrustedRuleSet = CompositeValidationRule( name = "Untrusted Rule Set" )
 untrustedRuleSet.addRule( ValidityPeriodRule() )
 untrustedRuleSet.addRule( BasicConstraintsRule( False, 0 ) )
 untrustedRuleSet.addRule( KeyUsageExtensionRule( untrustedKeyUsage ) )
@@ -85,26 +91,19 @@ class TestCertificateChainDelegate( CertificateChainDelegate ):
         try:
             # print( 'Verifying the signature of the subject certificate({0}) with the issuerCertificate({1})...'.format( subjectCertificate, issuerCertificate ) )
             issuerPublicKey = issuerCertificate.public_key()
-            # Use the following to access the signatureAlgorithm and parameters. It would be nice
-            # if we could get this directly from the x509.Certificate.
-            spkiEncoding = subjectCertificate.public_key().public_bytes( Encoding.DER, PublicFormat.SubjectPublicKeyInfo )
-            subjectPublicKeyInfo = decoder.decode( spkiEncoding, SubjectPublicKeyInfo() )
             hashAlgorithm = subjectCertificate.signature_hash_algorithm
             tbsCertificate = subjectCertificate.tbs_certificate_bytes
             subjectSignature = subjectCertificate.signature
-            # verifier = issuerPublicKey.verifier( subjectSignature, padding.PSS( mgf = padding.MGF1( hashAlgorithm ), salt_length = padding.PSS.MAX_LENGTH ), hashAlgorithm )
             padding = PKCS1v15()
             verifier = issuerPublicKey.verifier( subjectSignature, padding, hashAlgorithm )
             verifier.update( tbsCertificate )
             verifier.verify()
+            return True
+        except InvalidSignature:
+            return False          
         except Exception as e:
-            dumpTraceback()
-            # TODO: Log the exception info.
-            return False
-        
-        return True
-          
-        
+            raise e
+                
     def ruleFailed( self, ruleResult ):
         self._errors.append( ruleResult )
     
@@ -161,21 +160,20 @@ class ValidationTest( unittest.TestCase ):
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, untrustedRuleSet )
         isValid = chain.isValid( untrustedCertificate ) 
-        delegate.dumpErrors()           
+        if not isValid:
+            delegate.dumpErrors()           
         self.assertTrue( isValid, 'Certificate is invalid.' )
-        # print( 'Good chain finished processing.' )
         
-    def test_BadCertificateValidation( self ):
+    def xtest_BadCertificateValidation( self ):
         untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/BadSignedCACert.crt' )
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, trustedRuleSet )
         isValid = chain.isValid( untrustedCertificate )  
-        # delegate.dumpErrors()   
-        # print( 'Bad chain finished processing.' )
+        if not isValid:
+            delegate.dumpErrors()   
         self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
         
-
-    def test_CRLLookup( self ):
+    def xtest_CRLLookup( self ):
         crlRuleSet = CompositeValidationRule( rules = untrustedRuleSet.rules )       
         untrustedCertificate = ValidationTest.loadDERCertifcate( 'data/PKITS/certs/ValidCertificatePathTest1EE.crt' )
         crlLookup = TestCRLLookup()
@@ -184,6 +182,4 @@ class ValidationTest( unittest.TestCase ):
         delegate = TestCertificateChainDelegate() 
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, crlRuleSet )
         isValid = chain.isValid( untrustedCertificate )  
-        # delegate.dumpErrors()   
-        # print( 'Bad chain finished processing.' )
-        self.assertTrue( not isValid, 'Certificate is valid, expected invalid.' )
+        self.assertTrue( not isValid, 'Certificate is valid, expected invalid (on CRL).' )
