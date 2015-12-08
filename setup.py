@@ -36,4 +36,9 @@ setup(
         'Programming Language :: Python :: 3.4',
         'Topic :: Cryptography :: X.509',
     ],
+    
+    package_dir={"": "src"},
+    packages=[
+        "cryptographyx",
+    ]
  )
