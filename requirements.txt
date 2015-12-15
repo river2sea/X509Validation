@@ -1,1 +1,1 @@
-pip install cryptography>=1.1.2
+cryptography=1.1.2
