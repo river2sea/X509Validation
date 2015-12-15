@@ -3,6 +3,8 @@
 import sys
 import unittest
 
+sys.path.extend( [ "src", "test" ] )
+                  
 import x509Validation.ValidationTest
 
 
