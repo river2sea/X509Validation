@@ -184,3 +184,8 @@ class ValidationTest( unittest.TestCase ):
         chain = CertificateChain( delegate, ValidationTest.lookup, trustedRuleSet, crlRuleSet )
         isValid = chain.isValid( untrustedCertificate )  
         self.assertTrue( not isValid, 'Certificate is valid, expected invalid (on CRL).' )
+
+
+if __name__ == "__main__":
+    unittest.main()
+    

@@ -4,8 +4,30 @@ import uuid
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
-from x509Validation.ValidationTest import trustedKeyUsage, untrustedKeyUsage
 
+trustedKeyUsage = x509.KeyUsage( 
+    False,  # digital_signature
+    False,  # content_commitment
+    False,  # key_encipherment
+    False,  # data_encipherment
+    False,  # key_agreement
+    True,  # key_cert_sign
+    True,  # crl_sign
+    False,  # encipher_only
+    False  # decipher_only
+ )
+
+untrustedKeyUsage = x509.KeyUsage( 
+    True,  # digital_signature
+    True,  # content_commitment (aka non_repudiation)
+    True,  # key_encipherment
+    True,  # data_encipherment
+    False,  # key_agreement
+    False,  # key_cert_sign
+    False,  # crl_sign
+    False,  # encipher_only
+    False  # decipher_only    
+ )
 
 class Builder( object ):
     
