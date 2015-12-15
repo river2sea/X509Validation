@@ -9,8 +9,13 @@ python:
   - "3.5-dev" # 3.5 development branch
   - "nightly" # currently points to 3.6-dev
   
-# command to install dependencies
 install: "pip install cryptography"
 
-# command to run tests
-script: ./test.py
+install:
+  - pip install cryptography, unittest2 coveralls
+  
+script:
+  - nosetests --exe --with-coverage --cover-package=x509Validation
+  
+after_success:
+    - coveralls
